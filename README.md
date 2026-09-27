@@ -1,8 +1,8 @@
 # Blog Posts API — Serverless on AWS
 
-**Live API:** `https://YOUR_API_ENDPOINT/posts` &nbsp;·&nbsp; **Author:** [devgershon](https://github.com/devgershon)
+**Live API:** https://t0tn9g17b7.execute-api.eu-west-2.amazonaws.com/posts &nbsp;·&nbsp; **Author:** [devgershon](https://github.com/devgershon)
 
-A serverless REST API that powers the blog section of my [portfolio site](https://d2eeybsp9y6gvd.cloudfront.net). No servers to manage, no capacity to plan for. Lambda runs the code, API Gateway handles the routing, DynamoDB stores the data. When nobody is hitting the API, it costs nothing.
+A serverless REST API that powers the blog section of my [portfolio site](https://d2eeybsp9y6gvd.cloudfront.net). Lambda runs the code, API Gateway routes the requests, DynamoDB stores the posts. When the API is idle, nothing runs and nothing is charged.
 
 ---
 
@@ -59,8 +59,7 @@ Code updates deployed by GitHub Actions (tests run first).
 ## Quick test with curl
 
 ```bash
-# Set your API endpoint
-API="https://YOUR_API_ENDPOINT"
+API="https://t0tn9g17b7.execute-api.eu-west-2.amazonaws.com"
 
 # Create a post
 curl -X POST "$API/posts" \
@@ -70,7 +69,7 @@ curl -X POST "$API/posts" \
 # List all published posts
 curl "$API/posts?status=published"
 
-# Get a specific post (replace ID with the one returned above)
+# Get a specific post
 curl "$API/posts/YOUR-POST-ID"
 
 # Update a post
@@ -86,7 +85,7 @@ curl -X DELETE "$API/posts/YOUR-POST-ID"
 
 ## Deploy it yourself
 
-This is for anyone who wants to clone the repo and run their own version. You need an AWS account (free tier works), the AWS CLI, Terraform, and Python 3.12.
+You need an AWS account (free tier works), the AWS CLI configured, Terraform, and Python 3.12.
 
 ### 1. Clone and configure
 
@@ -95,9 +94,19 @@ git clone https://github.com/devgershon/aws-serverless-api.git
 cd aws-serverless-api
 ```
 
-Open `terraform/variables.tf` and set `allowed_origin` to your own site URL, or `"*"` if you just want to get it running quickly without a frontend.
+Open `terraform/variables.tf` and set `allowed_origin` to your site URL. Use `"*"` if you just want to test without a frontend.
 
-### 2. Deploy the infrastructure
+### 2. IAM permissions your user needs
+
+Before running Terraform, make sure your IAM user has these policies attached. You can do this in the AWS console under IAM -> Users -> your user -> Permissions:
+
+- `AWSLambda_FullAccess`
+- `AmazonAPIGatewayAdministrator`
+- `AmazonDynamoDBFullAccess`
+- `IAMFullAccess`
+- `CloudWatchLogsFullAccess`
+
+### 3. Deploy
 
 ```bash
 cd terraform
@@ -105,24 +114,18 @@ terraform init
 terraform apply
 ```
 
-This creates the DynamoDB table, Lambda function, API Gateway, IAM role, and CloudWatch log groups. Takes about a minute. When it finishes you get:
+Creates the DynamoDB table, Lambda function, API Gateway, IAM role, and CloudWatch log groups. Takes about a minute. When done:
 
 ```
-api_endpoint         = "https://abc123.execute-api.eu-west-2.amazonaws.com"
-posts_url            = "https://abc123.execute-api.eu-west-2.amazonaws.com/posts"
+api_endpoint         = "https://xxx.execute-api.eu-west-2.amazonaws.com"
+posts_url            = "https://xxx.execute-api.eu-west-2.amazonaws.com/posts"
 lambda_function_name = "blog-api-handler"
 dynamodb_table_name  = "blog-api-posts"
 ```
 
-### 3. Test it
-
-```bash
-curl https://abc123.execute-api.eu-west-2.amazonaws.com/posts
-```
-
 ### 4. Set up automated deploys
 
-Add these four secrets under `Settings -> Secrets -> Actions` in your GitHub repo:
+Add these four secrets under `Settings -> Secrets -> Actions`:
 
 | Secret | Value |
 |---|---|
@@ -131,11 +134,11 @@ Add these four secrets under `Settings -> Secrets -> Actions` in your GitHub rep
 | `LAMBDA_FUNCTION_NAME` | From `terraform output lambda_function_name` |
 | `API_ENDPOINT` | From `terraform output api_endpoint` |
 
-From here, every push to `main` runs the tests and deploys if they pass.
+Every push to `main` runs the tests first and deploys only if they pass.
 
-### 5. Connect it to your portfolio site
+### 5. Connect to your portfolio site
 
-Open `portfolio-blog-update.js`, replace `API_BASE_URL` with your API endpoint, and drop the script into your `index.html` just before `</body>`. The blog section will pull real posts from DynamoDB instead of showing static placeholders.
+Open `portfolio-blog-update.js`, drop in your API endpoint, and paste the script into your `index.html` just before `</body>`. The blog section will fetch real posts from DynamoDB instead of showing static content.
 
 ---
 
@@ -158,33 +161,31 @@ aws-serverless-api/
 ├── .github/
 │   └── workflows/
 │       └── deploy.yml    # Test then deploy on every push to main
-├── portfolio-blog-update.js  # Drop into Project 1 to connect the two
+├── portfolio-blog-update.js  # Connects Project 1 portfolio to this API
 └── README.md
 ```
 
 ---
 
-## Design decisions worth explaining
+## Design decisions
 
-**HTTP API, not REST API.** API Gateway has two products and the naming is confusing. HTTP API is the newer one — cheaper, faster, and simpler for Lambda proxy integrations. REST API has extra features like request validation and usage plans that this project does not need. Using HTTP API here was the right call and saves money.
+**HTTP API, not REST API.** API Gateway offers two products. HTTP API is the newer one — cheaper, lower latency, and simpler to configure for Lambda integrations. REST API adds features like request validation and usage plans that a blog API does not need.
 
-**One Lambda function for all routes.** You could split this into five separate functions, one per endpoint. I did not because for a project at this scale, one function is easier to deploy and reason about. The routing logic lives in the handler and is easy to follow.
+**One Lambda function for all routes.** Some people split APIs into one function per endpoint. I kept it as one function because at this scale it is easier to deploy, easier to read, and the routing logic in the handler is straightforward.
 
-**Least-privilege IAM.** The execution role only has permission to call `GetItem`, `PutItem`, `UpdateItem`, `DeleteItem`, and `Scan` on this specific DynamoDB table. Nothing wider. If the function were somehow compromised, the blast radius is limited to the posts table.
+**Least-privilege IAM.** The Lambda execution role can only call `GetItem`, `PutItem`, `UpdateItem`, `DeleteItem`, and `Scan` on this specific DynamoDB table. Nothing else. Keeping permissions tight limits what can go wrong if something is misconfigured.
 
-**CORS locked to the portfolio origin.** The `Access-Control-Allow-Origin` header is set to the CloudFront URL of my portfolio site, not `*`. This means only my site can call the API from a browser. Changed to `*` during development, then tightened before deploying.
+**CORS locked to the portfolio origin.** `Access-Control-Allow-Origin` is set to the CloudFront URL of my portfolio site rather than `*`. Only that origin can call the API from a browser.
 
 ---
 
 ## What I actually ran into
 
-**API Gateway has two completely different products with similar names.** HTTP API and REST API are not the same thing despite what the name implies. I went down the REST API path initially before realising HTTP API was what I needed and was cheaper. The AWS documentation makes this harder to figure out than it should be.
+**IAM policy attachments need the right permissions.** When I tried to attach policies to my IAM user via the CLI, it threw an AccessDenied error because the user did not have permission to manage its own policies. Had to go into the AWS console and attach them manually from the root account. Straightforward fix once I understood what was happening.
 
-**IAM has two separate policies and you need both right.** The trust policy (who can use the role) and the permission policy (what the role can do) are distinct documents. Getting the trust policy wrong means the Lambda function cannot even start — it cannot assume its own role. Getting the permission policy wrong means it starts but cannot touch DynamoDB. Both need to be correct before anything works.
+**CloudWatch Logs needs an explicit policy.** Lambda and API Gateway both write logs to CloudWatch, but Terraform cannot create the log groups unless your IAM user has `CloudWatchLogsFullAccess`. It is not bundled with the Lambda or API Gateway policies, which is not obvious until Terraform fails halfway through an apply and you have to track down which resource errored.
 
-**Cold starts exist and are worth understanding.** The first time Lambda runs after sitting idle, there is a delay while AWS provisions the execution environment. For a blog API this is completely fine. But it is something you need to understand before recommending Lambda for anything latency-sensitive.
-
-**moto saved a lot of time.** Testing DynamoDB code without moto means you need a real AWS table to run your tests against, which is slow and costs money in CI. moto intercepts the boto3 calls and simulates DynamoDB locally. The tests run in a few seconds with zero AWS cost.
+**moto makes testing practical.** Without it, every test would need a real DynamoDB table in AWS — slow, costs money, and awkward in CI. moto intercepts boto3 calls and runs a local DynamoDB simulation. Tests finish in seconds with no AWS involvement at all.
 
 ---
 
