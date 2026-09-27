@@ -4,7 +4,7 @@ Uses moto to mock DynamoDB so no real AWS resources are needed.
 
 Run with:
   pip install moto boto3 pytest
-  TABLE_NAME=blog-posts ALLOWED_ORIGIN=* pytest tests/ -v
+  pytest tests/ -v
 """
 
 import json
@@ -12,13 +12,16 @@ import os
 import pytest
 
 # Set env vars before importing handler
-os.environ["TABLE_NAME"]      = "blog-posts"
-os.environ["ALLOWED_ORIGIN"]  = "*"
+os.environ["TABLE_NAME"]             = "blog-posts"
+os.environ["ALLOWED_ORIGIN"]         = "*"
+os.environ["AWS_DEFAULT_REGION"]     = "eu-west-2"
+os.environ["AWS_ACCESS_KEY_ID"]      = "testing"
+os.environ["AWS_SECRET_ACCESS_KEY"]  = "testing"
 
 import boto3
 from moto import mock_aws
 
-# Create the mock table before importing handler so it picks up the env var
+
 @pytest.fixture
 def dynamodb_table():
     with mock_aws():
@@ -94,7 +97,6 @@ def test_list_posts_filter_by_status(dynamodb_table):
         from src import handler
         handler.table = dynamodb_table
 
-        # Create one draft and one published post
         handler.lambda_handler(make_event("POST", "/posts", {"title": "Draft", "content": "..."}), {})
         handler.lambda_handler(make_event("POST", "/posts", {"title": "Published", "content": "...", "status": "published"}), {})
 
@@ -172,7 +174,6 @@ def test_delete_post_success(dynamodb_table):
 
         assert res["statusCode"] == 200
 
-        # Confirm it is actually gone
         get_event = make_event("GET", f"/posts/{post_id}", path_params={"id": post_id})
         get_res   = handler.lambda_handler(get_event, {})
         assert get_res["statusCode"] == 404
